@@ -1,10 +1,10 @@
-{% csrf_token %}
-<script>window._USER_EMAIL = "{{ request.session.email|default:'' }}";</script>
-{% verbatim %}<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh">
 <head>
 <meta charset="UTF-8">
 <title>RTS Annotation Tool</title>
+<script>window._USER_EMAIL = "{{ request.session.email|default:'' }}";</script>
+{% verbatim %}
 <script src="/static/js/vue.global.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -93,22 +93,6 @@ body { background: #0d1117; color: #c9d1d9; font-family: -apple-system, BlinkMac
 .zoom-lock { cursor: pointer; font-size: 14px; opacity: 0.8; }
 .zoom-lock:hover { opacity: 1; }
 
-/* RTS实例工具栏 */
-.rts-bar {
-  position: absolute; top: 8px; right: 8px;
-  display: flex; gap: 4px; flex-wrap: wrap; max-width: 50%; justify-content: flex-end;
-}
-.rts-chip {
-  padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: 700;
-  border: 2px solid; cursor: pointer; transition: all 0.15s; background: rgba(0,0,0,0.7);
-}
-.rts-chip.active { background: rgba(0,0,0,0.9); }
-.rts-add {
-  padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: 700;
-  border: 2px dashed #484f58; color: #8b949e; cursor: pointer; background: rgba(0,0,0,0.7);
-}
-.rts-add:hover { border-color: #58a6ff; color: #58a6ff; }
-
 /* 右侧面板 */
 .right-panel {
   width: 280px; background: #161b22; border-left: 1px solid #30363d;
@@ -128,7 +112,7 @@ body { background: #0d1117; color: #c9d1d9; font-family: -apple-system, BlinkMac
 .stat-chip.unk .num { color: #a371f7; }
 .stat-chip .lbl { color: #8b949e; }
 
-.vbtn-row { display: flex; gap: 4px; }
+.vbtn-row { display: flex; flex-direction: column; gap: 4px; }
 .vbtn { flex: 1; padding: 6px 4px; border-radius: 6px; border: 1px solid #30363d; background: #21262d; color: #8b949e; cursor: pointer; font-size: 12px; font-weight: 600; text-align: center; transition: all 0.15s; }
 .vbtn:hover { border-color: #58a6ff; }
 .vbtn.yes.active { background: #0f2d1a; border-color: #3fb950; color: #3fb950; }
@@ -249,19 +233,6 @@ body { background: #0d1117; color: #c9d1d9; font-family: -apple-system, BlinkMac
             <button @click.stop="zoomReset" style="font-size:11px;font-weight:700;letter-spacing:0.5px">RESET</button>
           </div>
 
-          <!-- RTS实例选择器 -->
-          <div class="rts-bar">
-            <div v-for="inst in currentInstances" :key="inst.id"
-                 class="rts-chip"
-                 :class="{active: activeInstId===inst.id}"
-                 :style="{color: inst.color, borderColor: inst.color}"
-                 @click.stop="activeInstId=inst.id">
-              {{ inst.id }}
-              <span @click.stop="deleteInstById(inst.id)" style="margin-left:4px;opacity:0.7">×</span>
-            </div>
-            <div class="rts-add" @click.stop="addInstance">+ New RTS</div>
-          </div>
-
           <div class="big-label">S2 {{ activeYear }}</div>
 
           <div v-if="segmenting" class="big-loading">
@@ -325,7 +296,9 @@ body { background: #0d1117; color: #c9d1d9; font-family: -apple-system, BlinkMac
               <div>
                 <div style="color:#8b949e;margin-bottom:3px">ID</div>
                 <input :value="inst.id"
-                       @change="e => { inst.id = e.target.value }"
+                       @focus="e => e.target.dataset.oldId = inst.id"
+                       @keydown.enter.stop="e => { e.preventDefault(); e.target.blur(); }"
+                       @blur="e => renameInst(e.target.dataset.oldId || inst.id, e.target.value.trim())"
                        style="width:100%;background:#21262d;border:1px solid #30363d;color:#f0f6fc;
                               padding:4px 7px;border-radius:5px;font-size:12px;box-sizing:border-box">
               </div>
@@ -386,7 +359,7 @@ body { background: #0d1117; color: #c9d1d9; font-family: -apple-system, BlinkMac
             <span :style="{color: activeYear===year ? '#58a6ff' : '#8b949e', flexShrink:0}">{{ year }}</span>
             <span style="font-size:10px;margin-left:4px">
               <template v-if="(instances[year]||[]).filter(i=>i.polygon).length>0">
-                <span v-for="(inst, idx) in (instances[year]||[]).filter(i=>i.polygon)" :key="inst.id"
+                <span v-for="(inst, idx) in (instances[year]||[]).filter(i=>i.polygon).slice().sort((a,b)=>parseInt(a.id.replace(/\D/g,''))-parseInt(b.id.replace(/\D/g,'')))" :key="inst.id"
                       :style="{color: inst.color, marginLeft:'2px'}">{{ idx===0 ? inst.id : ','+inst.id.replace(/^[a-zA-Z]+/,'') }}</span>
               </template>
               <span v-else style="color:#484f58">—</span>
@@ -463,23 +436,6 @@ body { background: #0d1117; color: #c9d1d9; font-family: -apple-system, BlinkMac
 
       <hr class="divider">
 
-      <!-- Annotation Data -->
-      <div>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-          <div class="panel-label" style="margin-bottom:0">Annotation Data</div>
-          <button @click="copyAnnotation"
-                  style="background:#21262d;border:1px solid #30363d;color:#8b949e;
-                         border-radius:5px;padding:2px 7px;font-size:11px;cursor:pointer">
-            Copy
-          </button>
-        </div>
-        <pre style="background:#0d1117;border:1px solid #21262d;border-radius:6px;
-                    padding:8px;font-size:11px;color:#e6edf3;overflow:auto;
-                    height:120px;white-space:pre;font-family:monospace;line-height:1.5">{{ annotationJson }}</pre>
-      </div>
-
-      <hr class="divider">
-
       <!-- Note -->
       <div>
         <div class="panel-label">Note</div>
@@ -494,9 +450,9 @@ body { background: #0d1117; color: #c9d1d9; font-family: -apple-system, BlinkMac
         <div>
           <div class="panel-label" style="margin-bottom:4px">Validate-Result</div>
           <div class="vbtn-row">
-            <button class="vbtn yes" :class="{active:result==='yes'}" @click="result=(result==='yes'?'':'yes'); nextTick(autoSave)">Yes</button>
-            <button class="vbtn no" :class="{active:result==='no'}" @click="result=(result==='no'?'':'no'); nextTick(autoSave)">No</button>
-            <button class="vbtn unk" :class="{active:result==='unknown'}" @click="result=(result==='unknown'?'':'unknown'); nextTick(autoSave)">Unknown</button>
+            <button class="vbtn yes" :class="{active:result==='yes'}" @click="setConfirmedCorrect()">Confirmed Correct RTS</button>
+            <button class="vbtn no" :class="{active:result==='no'}" @click="setNoRts()">No RTS</button>
+            <button class="vbtn unk" :class="{active:result==='unknown'}" @click="result=(result==='unknown'?'':'unknown'); nextTick(autoSave)">Unsure</button>
           </div>
         </div>
         <div class="action-row">
@@ -548,7 +504,7 @@ createApp({
     const gifUrl = ref('');
     const mainMode = ref('sam');  // 'sam' | 'manual' | 'mouse'
     const manualPoints = ref([]);  // 手动绘制的顶点
-    const samScope = ref('sync'); // 'sync' | 'solo'
+    const samScope = ref('solo'); // 'sync' | 'solo'
     const currentUser = ref(window._USER_EMAIL || '');
     const infoTool = ref(false);
     const infoPanel = reactive({ show: false, inst: null, year: null, area: 0, note: '', x: 8, y: 8 });
@@ -679,37 +635,6 @@ createApp({
       return epsg3413ToWgs84(mx, my);
     }
 
-    const annotationJson = computed(() => {
-      const prefix = showNir.value ? 's2nir' : 's2';
-      const year = activeYear.value;
-      const gt = georefCache[`${prefix}_${year}`];
-      const list = (instances[year] || []).filter(i => i.polygon?.length);
-      if (!list.length) return '{}';
-
-      const features = list.map(inst => {
-        let coords;
-        if (gt) {
-          coords = inst.polygon.map(([c, r]) => pixelToLonLat(c, r, gt));
-          coords.push(coords[0]); // GeoJSON 闭合
-        } else {
-          coords = inst.polygon.map(([c, r]) => [c, r]);
-        }
-        return {
-          type: 'Feature',
-          properties: { id: inst.id, year },
-          geometry: { type: 'Polygon', coordinates: [coords] },
-        };
-      });
-
-      if (!gt) fetchGeoref(prefix, year);
-
-      return JSON.stringify({ type: 'FeatureCollection', features }, null, 2);
-    });
-
-    function copyAnnotation() {
-      navigator.clipboard.writeText(annotationJson.value).catch(() => {});
-    }
-
     // 切换年份/NIR时预取 georef
     watch([activeYear, showNir], ([y, nir]) => {
       fetchGeoref(nir ? 's2nir' : 's2', y);
@@ -775,6 +700,7 @@ createApp({
       infoTool.value = (mode === 'mouse');
       manualPoints.value = [];
       hoverPolygon.value = null;
+      activeInstId.value = null;
       redraw();
     }
 
@@ -877,7 +803,9 @@ createApp({
       return (((stats.yes||0)+(stats.no||0)+(stats.unknown||0)+(stats.skipped||0)) / stats.total * 100).toFixed(1);
     });
 
-    const currentInstances = computed(() => instances[activeYear.value] || []);
+    const currentInstances = computed(() => (instances[activeYear.value] || [])
+      .filter(i => i.polygon || (i.points && i.points.length > 0) || i.id === activeInstId.value)
+      .sort((a, b) => { const na = parseInt(a.id.replace(/\D/g,''))||0; const nb = parseInt(b.id.replace(/\D/g,''))||0; return na - nb; }));
 
     const activeInst = computed(() => {
       const list = instances[activeYear.value] || [];
@@ -1315,7 +1243,7 @@ createApp({
       const pos = clientToImg(e.clientX, e.clientY);
       if (!pos) return;
       pushUndo();  // 每次点击记一次，覆盖新建实例和分割结果
-      if (!activeInstId.value) addInstance(true, false);
+      if (!activeInstId.value) { addInstance(true, false); await nextTick(); }
       const inst = activeInst.value;
       if (!inst) return;
       if (!inst.points) inst.points = [];
@@ -1501,14 +1429,14 @@ createApp({
       }
     }
 
-    function onDblClick(e) {
+    async function onDblClick(e) {
       // 取消SAM单击延迟，防止双击时添加点
       clearTimeout(_clickTimer);
       // 手动模式：双击闭合多边形
       if (mainMode.value === 'manual') {
         if (manualPoints.value.length < 3) return;
         pushUndo();
-        if (!activeInstId.value) addInstance(false, false);
+        if (!activeInstId.value) { addInstance(false, false); await nextTick(); }
         const inst = activeInst.value;
         if (inst) {
           inst.polygon = [...manualPoints.value];
@@ -1605,22 +1533,29 @@ createApp({
       if (recordUndo) pushUndo();
       const year = activeYear.value;
       if (!instances[year]) instances[year] = [];
-      const idx = instances[year].length;
-      const id = `rts${String(idx+1).padStart(2,'0')}`;
-      const color = RTS_COLORS[idx % RTS_COLORS.length];
-      if (allYears) {
-        // SAM3模式：所有年份都添加该空实例，切换年份不会丢失
-        years.forEach(y => {
-          if (!instances[y]) instances[y] = [];
-          if (!instances[y].find(i => i.id === id)) {
-            instances[y].push({ id, color, polygon: null, points: [] });
-          }
-        });
-      } else {
-        // 手动/鼠标模式：只在当前年份添加
-        instances[year].push({ id, color, polygon: null, points: [] });
-      }
+      // 取所有相关年份中最大编号+1，避免删除后 length 不准导致 ID 冲突
+      const maxIdx = years.flatMap(y => (instances[y] || []).map(i => parseInt(i.id.replace(/\D/g, '')) || 0)).reduce((a, b) => Math.max(a, b), 0);
+      const idx = maxIdx + 1;
+      const id = `rts${String(idx).padStart(2,'0')}`;
+      const color = RTS_COLORS[(idx - 1) % RTS_COLORS.length];
+      instances[year].push({ id, color, polygon: null, points: [] });
       activeInstId.value = id;
+      redraw();
+    }
+
+    function renameInst(oldId, newId) {
+      if (!newId || newId === oldId) return;
+      const numMatch = newId.match(/\d+/);
+      const newColor = numMatch ? RTS_COLORS[(parseInt(numMatch[0]) - 1) % RTS_COLORS.length] : null;
+      years.forEach(y => {
+        if (!instances[y]) return;
+        // 删掉目标 ID 的空占位（无 polygon 无 points），避免重名
+        const dupIdx = instances[y].findIndex(i => i.id === newId && !i.polygon && !(i.points && i.points.length));
+        if (dupIdx >= 0) instances[y].splice(dupIdx, 1);
+        const t = instances[y].find(i => i.id === oldId);
+        if (t) { t.id = newId; if (newColor) t.color = newColor; }
+      });
+      if (activeInstId.value === oldId) activeInstId.value = newId;
       redraw();
     }
 
@@ -1630,19 +1565,10 @@ createApp({
       // 已确认的实例不允许自动删除，只允许手动强制删除
       if (isConfirmed && !force) return;
 
-      if (isConfirmed) {
-        // 已确认：只删当前年份
-        const list = instances[activeYear.value] || [];
-        const idx = list.findIndex(i => i.id === instId);
-        if (idx >= 0) list.splice(idx, 1);
-      } else {
-        // 未确认：删除所有年份
-        years.forEach(y => {
-          if (!instances[y]) return;
-          const idx = instances[y].findIndex(i => i.id === instId);
-          if (idx >= 0) instances[y].splice(idx, 1);
-        });
-      }
+      // 无论是否确认，都只删当前年份
+      const list = instances[activeYear.value] || [];
+      const idx = list.findIndex(i => i.id === instId);
+      if (idx >= 0) list.splice(idx, 1);
 
       // 删除后不重新编号，保持其他实例 ID 稳定
       const baseList = instances[activeYear.value] || [];
@@ -1697,9 +1623,9 @@ createApp({
       years.forEach(y => {
         const saved = d.annotations[y];
         if (saved && Array.isArray(saved)) {
-          instances[y] = saved.map((inst, i) => ({
+          instances[y] = saved.map((inst) => ({
             ...inst,
-            color: RTS_COLORS[i % RTS_COLORS.length],
+            color: RTS_COLORS[(parseInt(inst.id.replace(/\D/g, '')) - 1) % RTS_COLORS.length],
             points: []
           }));
         } else {
@@ -1707,9 +1633,7 @@ createApp({
         }
       });
 
-      // 自动选中第一个实例或新建
-      const firstInsts = instances[activeYear.value];
-      activeInstId.value = firstInsts[0]?.id || null;
+      activeInstId.value = null;
 
       await nextTick();
       redraw();
@@ -1785,6 +1709,29 @@ createApp({
       await _doSave();  // 仅保存，不跳转
     }
 
+    function setConfirmedCorrect() {
+      pushUndo();
+      years.forEach(y => {
+        (instances[y] || []).forEach(inst => { inst.confirmed = true; });
+      });
+      result.value = 'yes';
+      activeInstId.value = null;
+      redraw();
+      nextTick(autoSave);
+    }
+
+    function setNoRts() {
+      const turningOn = result.value !== 'no';
+      result.value = turningOn ? 'no' : '';
+      if (turningOn) {
+        // 选择"No RTS"代表这个cell里没有真实目标，清空所有年份画布上的多边形，避免跟结论矛盾
+        years.forEach(y => { instances[y] = []; });
+        activeInstId.value = null;
+        redraw();
+      }
+      nextTick(autoSave);
+    }
+
     async function skipCell() {
       if (!cellData.value) return;
       const r = await postJson('/api/save/', { cell_id: cellData.value.cell_id, annotations: {}, action: 'skipped', result: result.value, note: note.value });
@@ -1808,7 +1755,7 @@ createApp({
       await loadCell(target);
     }
     async function nextCellNav() {
-      const target = cellData.value?.next_pending || cellData.value?.next;
+      const target = cellData.value?.next;
       if (!target) return;
       _clearResultIfNoPolygon();
       await _doSave();
@@ -1829,12 +1776,7 @@ createApp({
     watch(activeYear, () => {
       hoverPolygon.value = null;
       if (!zoomLocked.value) { zoomLevel.value = 1.0; panX.value = 0; panY.value = 0; }
-      const list = instances[activeYear.value] || [];
-      if (mainMode.value === 'mouse') {
-        activeInstId.value = null;
-      } else if (!list.find(i => i.id === activeInstId.value)) {
-        activeInstId.value = list[0]?.id || null;
-      }
+      activeInstId.value = null;
       nextTick(redraw);
     });
     watch(showNir, () => nextTick(redraw));
@@ -1903,15 +1845,15 @@ createApp({
       cellData, stats, instances, activeInstId, activeInst, currentInstances, currentPoints,
       bigImg, bigCanvas, bigArea, progressPct,
       infoTool, infoPanel, mainMode, manualPoints, setMode,
-      instArea, annotationJson, copyAnnotation, confirmInstById, deleteInstById,
+      instArea, confirmInstById, deleteInstById,
       confirmInst, deleteInst, showInstCard, updateInfoArea,
       zoomLevel, zoomLocked, zoomIn, zoomOut, zoomReset, onWheel,
       thumbCanvases, redrawThumb, redrawAllThumbs,
       getUrl, instanceCount, onBigLoad,
       onMouseMove, onMouseLeave, onMouseDown, onMouseUp, onBigClick, onDblClick, onRightClick,
-      addInstance, removeInstance, clearCurrentPoints, clearPolygons,
+      addInstance, removeInstance, renameInst, clearCurrentPoints, clearPolygons,
       samScope, currentUser,
-      reloadCell, saveAnnotation, autoSave, skipCell, prevCell, nextCellNav, jumpTo,
+      reloadCell, saveAnnotation, autoSave, setConfirmedCorrect, setNoRts, skipCell, prevCell, nextCellNav, jumpTo,
       undo, redo, canUndo, canRedo,
     };
   }

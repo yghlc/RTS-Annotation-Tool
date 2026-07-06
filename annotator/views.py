@@ -78,6 +78,10 @@ def index(request):
 
 
 def get_image_path(cell_id, prefix, year):
+    # super-data 命名格式是 {year}_sr.png，只有RGB(s2)没有nir波段
+    if prefix == 's2':
+        candidate = os.path.join(DATA_ROOT, cell_id, f'{year}_sr.png')
+        return candidate if os.path.exists(candidate) else None
     pattern = os.path.join(DATA_ROOT, cell_id, f'{prefix}_{year}_id{cell_id}_*.png')
     files = glob.glob(pattern)
     return files[0] if files else None
@@ -136,9 +140,20 @@ def cell_detail(request, cell_id):
     request.session['last_cell'] = cell_id
 
     # 该用户自己的标注
+    own_annotations = {a.year: a.polygon for a in cell.annotations.filter(email=email)}
+
+    # 用户自己还没标注过的年份，用模型预测结果(email='model')兜底，标记为待确认
+    MODEL_EMAIL = 'model'
+    model_annotations = {a.year: a.polygon for a in cell.annotations.filter(email=MODEL_EMAIL)}
+
     annotations = {}
-    for a in cell.annotations.filter(email=email):
-        annotations[a.year] = a.polygon
+    for year in YEARS:
+        if year in own_annotations:
+            annotations[year] = own_annotations[year]
+        elif year in model_annotations:
+            annotations[year] = [
+                {**inst, 'confirmed': False} for inst in (model_annotations[year] or [])
+            ]
 
     # 该用户自己的 result/status/note
     try:
@@ -163,9 +178,11 @@ def cell_detail(request, cell_id):
     prev_cell = H3Cell.objects.filter(order_index__lt=cell.order_index).order_by('-order_index').first()
     next_cell = H3Cell.objects.filter(order_index__gt=cell.order_index).order_by('order_index').first()
 
-    # 全局下一个未处理的：没有任何人标了 yes 或 no 的
-    confirmed_ids = CellResult.objects.filter(result__in=['yes', 'no']).values_list('cell_id', flat=True).distinct()
-    next_pending = H3Cell.objects.filter(order_index__gt=cell.order_index).exclude(id__in=confirmed_ids).order_by('order_index').first()
+    # 下一个未处理的：别人标了 yes/no、但自己还没标过的，才跳过
+    others_confirmed_ids = CellResult.objects.filter(result__in=['yes', 'no']).exclude(email=email).values_list('cell_id', flat=True).distinct()
+    my_done_ids = CellResult.objects.filter(email=email).values_list('cell_id', flat=True)
+    skip_ids = set(others_confirmed_ids) - set(my_done_ids)
+    next_pending = H3Cell.objects.filter(order_index__gt=cell.order_index).exclude(id__in=skip_ids).order_by('order_index').first()
 
     return JsonResponse({
         'cell_id': cell_id,
@@ -207,7 +224,7 @@ def serve_image(request, cell_id, prefix, year):
 
 @_login_required
 def serve_gif(request, cell_id):
-    from PIL import Image
+    from PIL import Image, ImageDraw, ImageFont
     frames = []
     size = (256, 256)
     for year in YEARS:
@@ -216,6 +233,12 @@ def serve_gif(request, cell_id):
             img = Image.open(path).convert('RGB').resize(size, Image.LANCZOS)
         else:
             img = Image.new('RGB', size, (20, 20, 30))
+        draw = ImageDraw.Draw(img)
+        try:
+            font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 20)
+        except Exception:
+            font = ImageFont.load_default()
+        draw.text((6, 4), str(year), fill=(255, 255, 255), font=font)
         frames.append(img)
     if not frames:
         return HttpResponse(status=404)
@@ -272,7 +295,7 @@ def segment(request):
 
 def _annotation_file_path(cell_id, email):
     prefix = email.split('@')[0] if '@' in email else email
-    folder = Path(settings.BASE_DIR) / 'annotations' / cell_id
+    folder = Path(settings.BASE_DIR) / 'verified_annotations' / cell_id
     folder.mkdir(parents=True, exist_ok=True)
     return folder / f'{prefix}.json'
 
@@ -300,25 +323,28 @@ def _pixel_to_lonlat(col, row, gt):
     return [round(math.degrees(lam), 7), round(math.degrees(phi), 7)]
 
 
-def _build_geojson(cell_id, annotations):
+def _build_verified_annotations(cell_id, annotations):
+    """只导出人工真正确认过(confirmed=true)的实例，先只存像素坐标，
+    经纬度按需再用 geo_meta.json 转换（不在这里做）。"""
     features = []
     for year_str, instances in annotations.items():
         year = int(year_str)
-        gt = _read_aux_xml(cell_id, 's2', year)
         for inst in instances:
+            if not inst.get('confirmed'):
+                continue
             polygon = inst.get('polygon')
             if not polygon:
                 continue
-            if gt:
-                coords = [_pixel_to_lonlat(p[0], p[1], gt) for p in polygon]
-                coords.append(coords[0])
-            else:
-                coords = [[p[0], p[1]] for p in polygon]
-                coords.append(coords[0])
+            pixel_coords = [[p[0], p[1]] for p in polygon]
+            pixel_coords.append(pixel_coords[0])  # 像素坐标闭合
             features.append({
                 'type': 'Feature',
-                'properties': {'id': inst.get('id'), 'year': year, 'cell_id': cell_id},
-                'geometry': {'type': 'Polygon', 'coordinates': [coords]},
+                'properties': {
+                    'id': inst.get('id'),
+                    'year': year,
+                    'cell_id': cell_id,
+                    'pixel_polygon': pixel_coords,
+                },
             })
     return {'type': 'FeatureCollection', 'features': features}
 
@@ -355,27 +381,30 @@ def save_annotation(request):
         },
     )
 
-    # 更新 GeoJSON 文件
+    # 更新已验证标注文件（像素坐标，只含confirmed=true的实例）
+    # 只有 Confirmed Correct RTS(yes) / No RTS(no) 才写文件，Unsure(unknown)/空 不写
     ann_path = _annotation_file_path(cell_id, email)
     result_val = data.get('result', '')
 
-    if not result_val:
-        # result 已清空：删除该用户的 json 文件，文件夹空了就一起删
+    if result_val in ('yes', 'no'):
+        verified = _build_verified_annotations(cell_id, annotations)
+        verified['validate_result'] = result_val
+        ann_path.write_text(json.dumps(verified, ensure_ascii=False, indent=2))
+    else:
+        # result 为空或 unknown：删除该用户的 json 文件，文件夹空了就一起删
         if ann_path.exists():
             ann_path.unlink()
         folder = ann_path.parent
         if folder.exists() and not any(folder.iterdir()):
             folder.rmdir()
-    else:
-        geojson = _build_geojson(cell_id, annotations)
-        geojson['validate_result'] = result_val
-        ann_path.write_text(json.dumps(geojson, ensure_ascii=False, indent=2))
 
     request.session['last_cell'] = cell_id
 
-    # 全局下一个未处理的（任何人都没标过的）
-    globally_done_ids = CellResult.objects.exclude(status='pending').values_list('cell_id', flat=True).distinct()
-    next_pending = H3Cell.objects.filter(order_index__gt=cell.order_index).exclude(id__in=globally_done_ids).order_by('order_index').first()
+    # 别人标了 yes/no、但自己还没标过的，才跳过
+    others_confirmed_ids = CellResult.objects.filter(result__in=['yes', 'no']).exclude(email=email).values_list('cell_id', flat=True).distinct()
+    my_done_ids = CellResult.objects.filter(email=email).values_list('cell_id', flat=True)
+    skip_ids = set(others_confirmed_ids) - set(my_done_ids)
+    next_pending = H3Cell.objects.filter(order_index__gt=cell.order_index).exclude(id__in=skip_ids).order_by('order_index').first()
     next_cell = H3Cell.objects.filter(order_index__gt=cell.order_index).order_by('order_index').first()
 
     return JsonResponse({
@@ -415,24 +444,22 @@ def stats(request):
     return JsonResponse(_stats_dict(email))
 
 
-def _read_aux_xml(cell_id, prefix, year):
-    png_path = get_image_path(cell_id, prefix, int(year))
-    if not png_path:
-        return None
-    aux_path = png_path + '.aux.xml'
-    if not os.path.exists(aux_path):
+def _read_geo_meta(cell_id):
+    """super-data 的地理配准信息存在每个cell共用的 geo_meta.json 里（跟年份无关），
+    不再依赖逐张png的 .aux.xml 旁路文件。"""
+    geo_meta_path = os.path.join(DATA_ROOT, cell_id, 'geo_meta.json')
+    if not os.path.exists(geo_meta_path):
         return None
     try:
-        tree = ET.parse(aux_path)
-        gt_text = tree.getroot().find('GeoTransform').text
-        return [float(v.strip()) for v in gt_text.split(',')]
+        with open(geo_meta_path) as f:
+            return _json.load(f)
     except Exception:
         return None
 
 
 @_login_required
 def georef(request, cell_id, prefix, year):
-    gt = _read_aux_xml(cell_id, prefix, year)
-    if gt is None:
-        return JsonResponse({'error': 'aux.xml not found'}, status=404)
-    return JsonResponse({'geotransform': gt, 'crs': 'EPSG:3413'})
+    meta = _read_geo_meta(cell_id)
+    if meta is None:
+        return JsonResponse({'error': 'geo_meta not found'}, status=404)
+    return JsonResponse({'geotransform': meta['geotransform'], 'crs': f"EPSG:{meta['epsg']}"})

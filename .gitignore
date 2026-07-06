@@ -13,3 +13,6 @@ __pycache__/
 *.pyo
 sam3_info/.msc
 sam3_info/._____temp
+db.sqlite3.bak_*
+dev_server.log
+verified_annotations/

@@ -64,8 +64,8 @@ STATICFILES_DIRS = [BASE_DIR / 'static']
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# 数据集路径
-DATA_ROOT = '/home/hlc/Data/rts_ArcticDEM_mapping/validation/select_by_rf_v7_07_p3_4_png'
+# 数据集路径（geo_meta.json / pixel_polygons.json / {year}_label.png 都已统一放在这里的各cell文件夹下）
+DATA_ROOT = '/hdd10Tb/chenyf/super-data'
 
 # 登录配置
 LOGIN_URL = '/login/'

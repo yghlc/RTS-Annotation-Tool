@@ -118,6 +118,9 @@ def segment(image_path, points, labels, hint_key=None, store_key=None):
     best = int(np.argmax(scores))
     if store_key:
         with _hint_lock:
+            if len(_hint_cache) > 200:
+                # evict oldest entry
+                _hint_cache.pop(next(iter(_hint_cache)))
             _hint_cache[store_key] = low_res[best:best + 1].astype(np.float32)
     return mask_to_polygon(masks[best] > 0.5)
 
