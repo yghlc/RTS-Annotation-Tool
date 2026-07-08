@@ -77,12 +77,16 @@ def index(request):
     return render(request, 'index.html')
 
 
+# API层的prefix('s2'/'s2nir')跟实际文件名前缀不是一回事——我们的超分辨率
+# 产物文件名带"_super"，用来跟TP原始10m影像的 s2_/s2nir_ 命名区分开
+_FILE_PREFIX_MAP = {'s2': 's2_super', 's2nir': 's2nir_super'}
+
+
 def get_image_path(cell_id, prefix, year):
-    # super-data 命名格式是 {year}_sr.png，只有RGB(s2)没有nir波段
-    if prefix == 's2':
-        candidate = os.path.join(DATA_ROOT, cell_id, f'{year}_sr.png')
-        return candidate if os.path.exists(candidate) else None
-    pattern = os.path.join(DATA_ROOT, cell_id, f'{prefix}_{year}_id{cell_id}_*.png')
+    # super-data 命名格式是 s2_super_{year}_id{cell_id}_{suffix}.png（跟TP原始
+    # 数据集风格一致，suffix是从TP数据集里抄过来的同一个cell固定的数字）
+    file_prefix = _FILE_PREFIX_MAP.get(prefix, prefix)
+    pattern = os.path.join(DATA_ROOT, cell_id, f'{file_prefix}_{year}_id{cell_id}_*.png')
     files = glob.glob(pattern)
     return files[0] if files else None
 
@@ -225,10 +229,13 @@ def serve_image(request, cell_id, prefix, year):
 @_login_required
 def serve_gif(request, cell_id):
     from PIL import Image, ImageDraw, ImageFont
+    use_nir = request.GET.get('nir') == '1'
     frames = []
     size = (256, 256)
     for year in YEARS:
-        path = get_image_path(cell_id, 's2', year)
+        path = get_image_path(cell_id, 's2nir', year) if use_nir else None
+        if not path:
+            path = get_image_path(cell_id, 's2', year)
         if path:
             img = Image.open(path).convert('RGB').resize(size, Image.LANCZOS)
         else:
@@ -325,10 +332,11 @@ def _pixel_to_lonlat(col, row, gt):
 
 def _build_verified_annotations(cell_id, annotations):
     """只导出人工真正确认过(confirmed=true)的实例，先只存像素坐标，
-    经纬度按需再用 geo_meta.json 转换（不在这里做）。"""
-    features = []
+    经纬度按需再用 geo_meta.json 转换（不在这里做）。
+    按cell_id分组一次、再按年份分组，同年多个实例放一个列表里，避免每条重复写cell_id。"""
+    years_out = {}
     for year_str, instances in annotations.items():
-        year = int(year_str)
+        year_instances = []
         for inst in instances:
             if not inst.get('confirmed'):
                 continue
@@ -337,16 +345,13 @@ def _build_verified_annotations(cell_id, annotations):
                 continue
             pixel_coords = [[p[0], p[1]] for p in polygon]
             pixel_coords.append(pixel_coords[0])  # 像素坐标闭合
-            features.append({
-                'type': 'Feature',
-                'properties': {
-                    'id': inst.get('id'),
-                    'year': year,
-                    'cell_id': cell_id,
-                    'pixel_polygon': pixel_coords,
-                },
+            year_instances.append({
+                'rts_id': inst.get('id'),
+                'pixel_polygon': pixel_coords,
             })
-    return {'type': 'FeatureCollection', 'features': features}
+        if year_instances:
+            years_out[year_str] = year_instances
+    return {'cell_id': cell_id, 'years': years_out}
 
 
 @_login_required
@@ -445,13 +450,13 @@ def stats(request):
 
 
 def _read_geo_meta(cell_id):
-    """super-data 的地理配准信息存在每个cell共用的 geo_meta.json 里（跟年份无关），
-    不再依赖逐张png的 .aux.xml 旁路文件。"""
-    geo_meta_path = os.path.join(DATA_ROOT, cell_id, 'geo_meta.json')
-    if not os.path.exists(geo_meta_path):
+    """super-data 的地理配准信息存在每个cell共用的 geo_meta_id{cell_id}_{suffix}.json
+    里（跟年份无关），不再依赖逐张png的 .aux.xml 旁路文件。"""
+    matches = glob.glob(os.path.join(DATA_ROOT, cell_id, f'geo_meta_id{cell_id}_*.json'))
+    if not matches:
         return None
     try:
-        with open(geo_meta_path) as f:
+        with open(matches[0]) as f:
             return _json.load(f)
     except Exception:
         return None

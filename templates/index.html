@@ -200,7 +200,7 @@ body { background: #0d1117; color: #c9d1d9; font-family: -apple-system, BlinkMac
           <div class="thumb-label">{{ year }}</div>
         </div>
         <div class="thumb-card" style="cursor:default;border-color:#30363d">
-          <img v-if="gifUrl" :src="gifUrl" style="width:100%;aspect-ratio:1;object-fit:contain;display:block;background:#0d1117">
+          <img v-if="gifUrl" :src="gifSrc" style="width:100%;aspect-ratio:1;object-fit:contain;display:block;background:#0d1117">
           <div v-else style="aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:10px;color:#484f58;background:#0d1117">GIF</div>
           <div class="thumb-label" style="color:#a371f7">GIF</div>
         </div>
@@ -327,6 +327,7 @@ body { background: #0d1117; color: #c9d1d9; font-family: -apple-system, BlinkMac
             </div>
           </div>
         </div>
+
       </div>
 
     </div>
@@ -431,6 +432,8 @@ body { background: #0d1117; color: #c9d1d9; font-family: -apple-system, BlinkMac
         <div style="margin-top:6px;font-size:11px;color:#484f58">
           Active: <span style="color:#f0883e">{{ activeInstId || 'None' }}</span>
         </div>
+
+        <button class="tbtn" style="width:100%;margin-top:6px" @click="mergeWithPreviousYear" title="1) same-ID with previous year, 2) overlapping instances within a year">⇄ Auto-merge</button>
       </div>
 
 
@@ -502,6 +505,7 @@ createApp({
     const jumpInput = ref('');
     const segmenting = ref(false);
     const gifUrl = ref('');
+    const gifSrc = computed(() => gifUrl.value ? gifUrl.value + (showNir.value ? '?nir=1' : '') : '');
     const mainMode = ref('sam');  // 'sam' | 'manual' | 'mouse'
     const manualPoints = ref([]);  // 手动绘制的顶点
     const samScope = ref('solo'); // 'sync' | 'solo'
@@ -1559,6 +1563,212 @@ createApp({
       redraw();
     }
 
+    function rasterizePolygonsToMask(polygons, w, h) {
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff';
+      polygons.forEach(poly => {
+        if (!poly || poly.length < 3) return;
+        ctx.beginPath();
+        ctx.moveTo(poly[0][0], poly[0][1]);
+        for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i][0], poly[i][1]);
+        ctx.closePath();
+        ctx.fill();
+      });
+      const data = ctx.getImageData(0, 0, w, h).data;
+      const mask = new Uint8Array(w * h);
+      for (let i = 0; i < w * h; i++) mask[i] = data[i * 4] > 127 ? 1 : 0;
+      return mask;
+    }
+
+    // Moore-neighbor 边界跟踪：把栅格化之后的并集mask重新描边成多边形
+    function traceContourFromMask(mask, w, h) {
+      const at = (x, y) => (x < 0 || y < 0 || x >= w || y >= h) ? 0 : mask[y * w + x];
+      let start = null;
+      for (let y = 0; y < h && !start; y++) {
+        for (let x = 0; x < w; x++) {
+          if (at(x, y)) { start = [x, y]; break; }
+        }
+      }
+      if (!start) return null;
+
+      const dirs = [[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
+      function dirIndexOf(dx, dy) {
+        for (let i = 0; i < 8; i++) if (dirs[i][0] === dx && dirs[i][1] === dy) return i;
+        return -1;
+      }
+
+      let current = start;
+      let backtrack = [start[0] - 1, start[1]];
+      const boundary = [current];
+      const maxSteps = w * h * 4;
+      let steps = 0;
+
+      while (steps++ < maxSteps) {
+        const bdx = backtrack[0] - current[0], bdy = backtrack[1] - current[1];
+        let searchStart = dirIndexOf(bdx, bdy);
+        if (searchStart < 0) searchStart = 0;
+
+        let found = null, foundPrevDir = null;
+        for (let i = 1; i <= 8; i++) {
+          const di = (searchStart + i) % 8;
+          const nx = current[0] + dirs[di][0], ny = current[1] + dirs[di][1];
+          if (at(nx, ny)) {
+            found = [nx, ny];
+            const prevDi = (di + 7) % 8;
+            foundPrevDir = [current[0] + dirs[prevDi][0], current[1] + dirs[prevDi][1]];
+            break;
+          }
+        }
+        if (!found) break;
+
+        backtrack = foundPrevDir;
+        current = found;
+        if (current[0] === start[0] && current[1] === start[1]) break;
+        boundary.push(current);
+      }
+      return boundary;
+    }
+
+    function simplifyPolygon(points, epsilon) {
+      if (points.length < 3) return points;
+      function perpDist(p, a, b) {
+        const dx = b[0] - a[0], dy = b[1] - a[1];
+        const len = Math.sqrt(dx * dx + dy * dy);
+        if (len === 0) return Math.hypot(p[0] - a[0], p[1] - a[1]);
+        return Math.abs((p[0] - a[0]) * dy - (p[1] - a[1]) * dx) / len;
+      }
+      function rdp(pts) {
+        if (pts.length < 3) return pts;
+        let maxDist = 0, idx = 0;
+        for (let i = 1; i < pts.length - 1; i++) {
+          const d = perpDist(pts[i], pts[0], pts[pts.length - 1]);
+          if (d > maxDist) { maxDist = d; idx = i; }
+        }
+        if (maxDist > epsilon) {
+          const left = rdp(pts.slice(0, idx + 1));
+          const right = rdp(pts.slice(idx));
+          return left.slice(0, -1).concat(right);
+        }
+        return [pts[0], pts[pts.length - 1]];
+      }
+      return rdp(points);
+    }
+
+    // 把一组实例的形状取并集、重新描边，编号取里面最靠前(数字最小)的那个
+    function _mergeGroupToOne(year, group) {
+      const img = bigImg.value;
+      const w = img.naturalWidth, h = img.naturalHeight;
+      const mask = rasterizePolygonsToMask(group.map(g => g.polygon), w, h);
+      const rawBoundary = traceContourFromMask(mask, w, h);
+      if (!rawBoundary || rawBoundary.length < 3) return;
+      const merged = simplifyPolygon(rawBoundary, 1.5);
+
+      const finalId = group.map(g => g.id).reduce((a, b) => {
+        const na = parseInt(a.replace(/\D/g, '')) || 0;
+        const nb = parseInt(b.replace(/\D/g, '')) || 0;
+        return nb < na ? b : a;
+      });
+      const numMatch = finalId.match(/\d+/);
+      const finalColor = numMatch ? RTS_COLORS[(parseInt(numMatch[0]) - 1) % RTS_COLORS.length] : RTS_COLORS[0];
+
+      const keeper = group.find(g => g.id === finalId) || group[0];
+      const dropIds = new Set(group.filter(g => g !== keeper).map(g => g.id));
+      instances[year] = (instances[year] || []).filter(i => !dropIds.has(i.id));
+      keeper.polygon = merged;
+      keeper.id = finalId;
+      keeper.color = finalColor;
+      keeper.confirmed = false; // 合并之后形状变了，需要标注员重新手动确认
+    }
+
+    // 同一年内，把像素上互相有重叠的实例(同一个滑塌被识别成好几个不同编号)
+    // 用并查集分组，每组直接合并成一个
+    function _mergeOverlapsInYear(year, w, h) {
+      const valid = (instances[year] || []).filter(i => i.polygon && i.polygon.length >= 3);
+      if (valid.length < 2) return;
+
+      const masks = valid.map(i => rasterizePolygonsToMask([i.polygon], w, h));
+      const n = valid.length;
+      const parent = Array.from({ length: n }, (_, i) => i);
+      const find = x => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
+      const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; };
+
+      for (let a = 0; a < n; a++) {
+        for (let b = a + 1; b < n; b++) {
+          const ma = masks[a], mb = masks[b];
+          let overlap = false;
+          for (let k = 0; k < ma.length; k++) { if (ma[k] && mb[k]) { overlap = true; break; } }
+          if (overlap) union(a, b);
+        }
+      }
+
+      const groups = {};
+      for (let i = 0; i < n; i++) { const r = find(i); (groups[r] = groups[r] || []).push(valid[i]); }
+      Object.values(groups).forEach(group => { if (group.length >= 2) _mergeGroupToOne(year, group); });
+    }
+
+    // 一键合并：
+    // 1) 按年份从早到晚维护一个"注册表"(id -> 最新形状)，只要某个ID在
+    //    某一年出现过一次，从那年往后每一年都必须有它——就算某年完全没
+    //    识别到，也要把上一次的形状原样带过来新建一个实例，不能断档消失；
+    //    如果那一年本来就有同名实例，就跟带过来的形状取并集，只增不减；
+    // 2) 处理完传递之后，同一年内互相有像素重叠的实例再合并成一个
+    //    (传递之后形状变大了，可能会产生新的重叠)。
+    // 全程只写当前这一年，不会改动更早年份的记录。
+    function mergeWithPreviousYear() {
+      const img = bigImg.value;
+      if (!img || !img.naturalWidth) return;
+      const w = img.naturalWidth, h = img.naturalHeight;
+
+      pushUndo();
+      const sortedYears = years.slice().sort((a, b) => a - b);
+      const registry = {}; // id -> 目前为止见过的最新形状
+
+      sortedYears.forEach(year => {
+        if (!instances[year]) instances[year] = [];
+        const list = instances[year];
+
+        // 这一年已经出现的实例：如果注册表里有同名的，取并集
+        list.forEach(inst => {
+          if (!inst.polygon || inst.polygon.length < 3) return;
+          const prevPolygon = registry[inst.id];
+          if (!prevPolygon) return;
+          const mask = rasterizePolygonsToMask([inst.polygon, prevPolygon], w, h);
+          const rawBoundary = traceContourFromMask(mask, w, h);
+          if (rawBoundary && rawBoundary.length >= 3) {
+            const merged = simplifyPolygon(rawBoundary, 1.5);
+            if (JSON.stringify(merged) !== JSON.stringify(inst.polygon)) {
+              inst.polygon = merged;
+              inst.confirmed = false; // 形状变了，需要标注员重新手动确认
+            }
+          }
+        });
+
+        // 注册表里有、但这一年完全没出现的实例：原样带过来新建一个
+        Object.keys(registry).forEach(id => {
+          if (list.some(i => i.id === id)) return;
+          const numMatch = id.match(/\d+/);
+          const color = numMatch ? RTS_COLORS[(parseInt(numMatch[0]) - 1) % RTS_COLORS.length] : RTS_COLORS[0];
+          list.push({ id, color, polygon: registry[id], points: [], confirmed: false });
+        });
+
+        // 用这一年结束之后的最新形状更新注册表，供后面年份继续传递
+        list.forEach(inst => {
+          if (inst.polygon && inst.polygon.length >= 3) registry[inst.id] = inst.polygon;
+        });
+      });
+
+      // 传递之后形状可能变大了，原本没挨到一起的两个实例现在可能重叠了，
+      // 所以放在后面做：同一年内，把像素上互相有重叠的实例直接合并成一个
+      sortedYears.forEach(year => _mergeOverlapsInYear(year, w, h));
+
+      redraw();
+      redrawAllThumbs();
+      nextTick(autoSave);
+    }
+
     function removeInstance(instId, force = false) {
       const instObj = (instances[activeYear.value] || []).find(i => i.id === instId);
       const isConfirmed = instObj?.confirmed;
@@ -1711,10 +1921,11 @@ createApp({
 
     function setConfirmedCorrect() {
       pushUndo();
+      const turningOn = result.value !== 'yes';
+      result.value = turningOn ? 'yes' : '';
       years.forEach(y => {
-        (instances[y] || []).forEach(inst => { inst.confirmed = true; });
+        (instances[y] || []).forEach(inst => { inst.confirmed = turningOn; });
       });
-      result.value = 'yes';
       activeInstId.value = null;
       redraw();
       nextTick(autoSave);
@@ -1841,10 +2052,11 @@ createApp({
 
     return {
       years, opacity, showPolygons, fillPolygons, showNir, hoverEnabled,
-      tool, editMode, activeYear, result, note, jumpInput, segmenting, gifUrl,
+      tool, editMode, activeYear, result, note, jumpInput, segmenting, gifUrl, gifSrc,
       cellData, stats, instances, activeInstId, activeInst, currentInstances, currentPoints,
       bigImg, bigCanvas, bigArea, progressPct,
       infoTool, infoPanel, mainMode, manualPoints, setMode,
+      mergeWithPreviousYear,
       instArea, confirmInstById, deleteInstById,
       confirmInst, deleteInst, showInstCard, updateInfoArea,
       zoomLevel, zoomLocked, zoomIn, zoomOut, zoomReset, onWheel,

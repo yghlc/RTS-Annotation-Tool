@@ -1,110 +1,103 @@
+{% load static %}
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RTS Annotator · Sign In</title>
+<title>RTS Annotation Tool · Sign In</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
 <style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: #0d1117;
-  color: #e6edf3;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+:root{
+  --text:#f1f6f8; --muted:#c0cdd3; --faint:#8ea0a8;
+  --ice:#7cc0f0; --ice-deep:#2f708f; --rust:#d18f68;
+  --line:rgba(150,180,195,.32);
 }
-body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  background-image:
-    linear-gradient(rgba(48,54,61,0.4) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(48,54,61,0.4) 1px, transparent 1px);
-  background-size: 40px 40px;
-  pointer-events: none;
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  color:var(--text);min-height:100vh;position:relative;overflow-x:hidden;
+  display:flex;align-items:center;justify-content:center;padding:32px;background:#0a1820;
+  -webkit-font-smoothing:antialiased;
 }
-.card {
-  position: relative;
-  width: 380px;
-  background: #161b22;
-  border: 1px solid #30363d;
-  border-radius: 12px;
-  padding: 36px 32px 32px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+/* full-bleed RTS photo */
+body::before{
+  content:'';position:fixed;inset:-20px;z-index:-2;
+  background:url('{% static "bg.png" %}') center/cover no-repeat;
+  filter:blur(2px) saturate(1.05);transform:scale(1.06);
 }
-.logo {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 28px;
+/* stronger darkening — no card, so the background must carry the contrast */
+body::after{
+  content:'';position:fixed;inset:0;z-index:-1;
+  background:
+    radial-gradient(760px 620px at 50% 50%, rgba(8,20,26,.55), transparent 70%),
+    linear-gradient(180deg, rgba(8,20,26,.68) 0%, rgba(7,17,23,.72) 45%, rgba(6,15,20,.82) 100%);
 }
-.logo-icon {
-  width: 36px; height: 36px;
-  background: linear-gradient(135deg, #238636, #3fb950);
-  border-radius: 8px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 18px;
+
+/* ---------- borderless content column ---------- */
+.panel{
+  position:relative;width:100%;max-width:340px;
+  text-shadow:0 1px 12px rgba(0,0,0,.5);
 }
-.logo-text { font-size: 15px; font-weight: 700; color: #e6edf3; }
-.logo-sub  { font-size: 11px; color: #8b949e; margin-top: 1px; }
-h1 { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
-.subtitle { font-size: 13px; color: #8b949e; margin-bottom: 28px; }
-.field { margin-bottom: 16px; }
-label {
-  display: block;
-  font-size: 11px; font-weight: 600; color: #8b949e;
-  text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;
+.logo{display:flex;align-items:center;gap:12px;margin-bottom:30px}
+.logo-icon{
+  width:42px;height:42px;border-radius:11px;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,var(--ice-deep),#4b93b3);
+  box-shadow:0 8px 22px -8px rgba(0,0,0,.8), 0 0 0 1px rgba(140,200,240,.35) inset;
 }
-.optional { color: #484f58; font-weight: 400; text-transform: none; letter-spacing: 0; margin-left: 4px; }
-input[type=email], input[type=text] {
-  width: 100%;
-  background: #0d1117;
-  border: 1px solid #30363d;
-  border-radius: 8px;
-  color: #e6edf3;
-  font-size: 14px;
-  padding: 10px 14px;
-  outline: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
+.logo-text{font-size:15px;font-weight:700;letter-spacing:.01em}
+.logo-sub{font-size:11px;color:var(--muted);margin-top:2px;font-family:"IBM Plex Mono",monospace}
+
+h1{font-family:"IBM Plex Serif",Georgia,serif;font-size:26px;font-weight:600;margin-bottom:7px;letter-spacing:-.01em}
+.subtitle{font-size:13.5px;color:var(--muted);margin-bottom:30px}
+
+.error{
+  background:rgba(218,54,51,.22);border:1px solid rgba(255,120,110,.5);border-radius:8px;
+  color:#ffb3ac;font-size:13px;padding:10px 13px;margin-bottom:18px;line-height:1.45;
+  text-shadow:none;backdrop-filter:blur(6px);
 }
-input[type=email]:focus, input[type=text]:focus {
-  border-color: #388bfd;
-  box-shadow: 0 0 0 3px rgba(56,139,253,0.15);
+.field{margin-bottom:17px}
+label{
+  display:block;font-family:"IBM Plex Mono",monospace;font-size:10.5px;font-weight:600;
+  color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px;
 }
-.btn-submit {
-  width: 100%; margin-top: 8px; padding: 11px;
-  background: linear-gradient(180deg, #2ea043, #238636);
-  border: 1px solid rgba(240,246,252,0.1);
-  border-radius: 8px;
-  color: #fff; font-size: 14px; font-weight: 600;
-  cursor: pointer; transition: filter 0.15s;
+.optional{color:var(--faint);font-weight:500;text-transform:none;letter-spacing:0;margin-left:4px}
+input[type=email],input[type=text]{
+  width:100%;background:rgba(6,15,20,.55);border:1px solid var(--line);border-radius:9px;
+  color:var(--text);font-size:14px;font-family:inherit;padding:12px 15px;outline:none;
+  text-shadow:none;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  transition:border-color .15s,box-shadow .15s,background .15s;
 }
-.btn-submit:hover { filter: brightness(1.1); }
-.btn-submit:active { filter: brightness(0.95); }
-.error {
-  background: rgba(218,54,51,0.12);
-  border: 1px solid rgba(218,54,51,0.4);
-  border-radius: 8px;
-  color: #f85149; font-size: 13px;
-  padding: 10px 14px; margin-bottom: 18px;
+input::placeholder{color:#7f9199}
+input:focus{border-color:var(--ice);background:rgba(6,15,20,.72);box-shadow:0 0 0 3px rgba(124,192,240,.18)}
+.btn-submit{
+  width:100%;margin-top:10px;padding:13px;position:relative;
+  background:linear-gradient(180deg,#4295b8,var(--ice-deep));
+  border:1px solid rgba(124,192,240,.45);border-radius:9px;
+  color:#fff;font-size:14px;font-weight:600;font-family:inherit;cursor:pointer;text-shadow:none;
+  box-shadow:0 10px 26px -10px rgba(0,0,0,.85), 0 1px 0 rgba(255,255,255,.2) inset;
+  transition:filter .15s,transform .05s;
 }
-.footer { margin-top: 24px; text-align: center; font-size: 12px; color: #484f58; }
-.tag {
-  position: absolute; top: -1px; right: 20px;
-  background: #1f6feb; color: #e6edf3;
-  font-size: 10px; font-weight: 700; letter-spacing: 0.8px;
-  padding: 3px 10px; border-radius: 0 0 6px 6px;
-}
+.btn-submit:hover{filter:brightness(1.1)}
+.btn-submit:active{transform:translateY(1px);filter:brightness(.96)}
+
+.guide{margin-top:22px;font-size:12.5px;color:var(--muted)}
+.guide a{color:var(--ice);text-decoration:none;border-bottom:1px solid rgba(124,192,240,.4)}
+.guide a:hover{border-color:var(--ice)}
+.footer{margin-top:26px;font-size:11px;color:var(--faint);font-family:"IBM Plex Mono",monospace}
 </style>
 </head>
 <body>
-<div class="card">
-  <div class="tag">INTERNAL</div>
+<div class="panel">
   <div class="logo">
-    <div class="logo-icon">🛰</div>
+    <div class="logo-icon">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" fill="none" stroke="#eaf4fb" stroke-width="1.3" opacity=".38"/>
+        <circle cx="12" cy="12" r="5.4" fill="none" stroke="#eaf4fb" stroke-width="1.6" opacity=".72"/>
+        <circle cx="12" cy="12" r="2.1" fill="#eaf4fb"/>
+      </svg>
+    </div>
     <div>
       <div class="logo-text">RTS Annotator</div>
       <div class="logo-sub">Retrogressive Thaw Slump · SAM2</div>
@@ -131,6 +124,11 @@ input[type=email]:focus, input[type=text]:focus {
     </div>
     <button type="submit" class="btn-submit">Sign in →</button>
   </form>
+
+  <p class="guide">
+    First time here?
+    <a href="https://chenyufei030316-max.github.io/RTS-Annotation-Tool/" target="_blank" rel="noopener">Read the guide</a>
+  </p>
 
   <div class="footer">Arctic permafrost mapping · Internal tool</div>
 </div>

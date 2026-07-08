@@ -12,10 +12,11 @@
 
 import os
 import sys
+import glob
 import json
 import math
 
-FILTERED_DIR = "/hdd10Tb/chenyf/SAM2UNet/predictions/superdata_filtered"
+FILTERED_DIR = "/hdd10Tb/chenyf/super-data"
 
 
 def _pixel_to_lonlat(col, row, gt):
@@ -43,11 +44,13 @@ def _pixel_to_lonlat(col, row, gt):
 
 def convert_one(cell_id):
     cell_dir = os.path.join(FILTERED_DIR, cell_id)
-    pixel_path = os.path.join(cell_dir, "pixel_polygons.json")
-    geo_meta_path = os.path.join(cell_dir, "geo_meta.json")
+    pixel_matches = glob.glob(os.path.join(cell_dir, f"pixel_polygons_id{cell_id}_*.json"))
+    geo_meta_matches = glob.glob(os.path.join(cell_dir, f"geo_meta_id{cell_id}_*.json"))
 
-    if not (os.path.exists(pixel_path) and os.path.exists(geo_meta_path)):
+    if not (pixel_matches and geo_meta_matches):
         return None
+    pixel_path = pixel_matches[0]
+    geo_meta_path = geo_meta_matches[0]
 
     with open(pixel_path) as f:
         pixel_data = json.load(f)
@@ -55,17 +58,23 @@ def convert_one(cell_id):
         geo_meta = json.load(f)
 
     gt = geo_meta["geotransform"]
+    cell_id = pixel_data["cell_id"]
 
     out_features = []
-    for feat in pixel_data["features"]:
-        props = feat["properties"]
-        pixel_polygon = props["pixel_polygon"]
-        coords = [_pixel_to_lonlat(p[0], p[1], gt) for p in pixel_polygon]
-        out_features.append({
-            "type": "Feature",
-            "properties": props,
-            "geometry": {"type": "Polygon", "coordinates": [coords]},
-        })
+    for year_str, year_instances in pixel_data["years"].items():
+        for inst in year_instances:
+            pixel_polygon = inst["pixel_polygon"]
+            coords = [_pixel_to_lonlat(p[0], p[1], gt) for p in pixel_polygon]
+            out_features.append({
+                "type": "Feature",
+                "properties": {
+                    "rts_id": inst["rts_id"],
+                    "year": int(year_str),
+                    "cell_id": cell_id,
+                    "pixel_polygon": pixel_polygon,
+                },
+                "geometry": {"type": "Polygon", "coordinates": [coords]},
+            })
 
     out_geojson = {"type": "FeatureCollection", "features": out_features}
     out_path = os.path.join(cell_dir, "model_prediction.geojson")

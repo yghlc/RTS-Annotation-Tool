@@ -1,4 +1,5 @@
 import os
+import glob
 import json
 from django.core.management.base import BaseCommand
 from annotator.models import H3Cell, Annotation
@@ -37,30 +38,28 @@ class Command(BaseCommand):
             if created:
                 cells_created += 1
 
-            pixel_path = os.path.join(SUPER_DATA_DIR, cell_id, 'pixel_polygons.json')
-            if not os.path.exists(pixel_path):
+            pixel_matches = glob.glob(os.path.join(SUPER_DATA_DIR, cell_id, f'pixel_polygons_id{cell_id}_*.json'))
+            if not pixel_matches:
                 continue
+            pixel_path = pixel_matches[0]
             cells_with_predictions += 1
 
             with open(pixel_path) as f:
                 data = json.load(f)
 
-            by_year = {}
-            for feat in data['features']:
-                props = feat['properties']
-                year = props['year']
-                polygon = props['pixel_polygon']
-                # DB 里的 polygon 是开环（不重复首点），闭合由前端/导出逻辑自己做
-                if len(polygon) > 1 and polygon[0] == polygon[-1]:
-                    polygon = polygon[:-1]
-                by_year.setdefault(year, []).append({
-                    'id': props['id'],
-                    'polygon': polygon,
-                })
-
-            for year, instances in by_year.items():
+            for year_str, year_instances in data['years'].items():
+                instances = []
+                for inst in year_instances:
+                    polygon = inst['pixel_polygon']
+                    # DB 里的 polygon 是开环（不重复首点），闭合由前端/导出逻辑自己做
+                    if len(polygon) > 1 and polygon[0] == polygon[-1]:
+                        polygon = polygon[:-1]
+                    instances.append({
+                        'id': inst['rts_id'],
+                        'polygon': polygon,
+                    })
                 Annotation.objects.update_or_create(
-                    cell=cell, email=MODEL_EMAIL, year=year,
+                    cell=cell, email=MODEL_EMAIL, year=int(year_str),
                     defaults={'polygon': instances}
                 )
                 annotations_written += 1
