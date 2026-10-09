@@ -1,10 +1,20 @@
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+import os
 
-SECRET_KEY = 'django-insecure-rts-annotator-2024'
-DEBUG = True
-ALLOWED_HOSTS = ['*']
+import parameters
+setting_file = os.path.join(BASE_DIR,'setting.ini')
+
+SECRET_KEY = parameters.get_string_parameters(setting_file,'secret_key')
+# SECURITY WARNING: don't run with debug turned on in production!
+DEBUG = parameters.get_bool_parameters(setting_file,'DEBUG')
+
+host_name = parameters.get_string_parameters(setting_file,'host_name')
+ALLOWED_HOSTS = ['127.0.0.1',
+                 'localhost',
+                 '192.168.23.56',
+                 host_name]
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -65,12 +75,16 @@ STATICFILES_DIRS = [BASE_DIR / 'static']
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # 数据集路径（geo_meta.json / pixel_polygons.json / {year}_label.png 都已统一放在这里的各cell文件夹下）
-DATA_ROOT = '/hdd10Tb/chenyf/super-data'
+# DATA_ROOT = '/hdd10Tb/chenyf/super-data'
+DATA_ROOT = os.path.expanduser(parameters.get_string_parameters(setting_file,'DATA_ROOT'))
 
 # 登录配置
 LOGIN_URL = '/login/'
 ALLOWED_EMAILS_FILE = BASE_DIR / 'allowed_emails.json'
 
 # SAM2 模型路径
-SAM2_CHECKPOINT = '/hdd10Tb/chenyf/sam2_checkpoints/sam2.1_hiera_large.pt'
-SAM2_CONFIG = 'configs/sam2.1/sam2.1_hiera_l.yaml'
+# SAM2_CHECKPOINT = '/hdd10Tb/chenyf/sam2_checkpoints/sam2.1_hiera_large.pt'
+# SAM2_CONFIG = 'configs/sam2.1/sam2.1_hiera_l.yaml'
+SAM2_CHECKPOINT = os.path.expanduser(parameters.get_string_parameters(setting_file,'SAM2_CHECKPOINT'))
+# SAM2_CONFIG = os.path.expanduser(parameters.get_string_parameters(setting_file,'SAM2_CONFIG'))
+SAM2_CONFIG = parameters.get_string_parameters(setting_file,'SAM2_CONFIG')
